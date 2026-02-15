@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" />
   <title>Gantt</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -224,14 +225,28 @@
       </div>
     </div>
 
+    <div id="importProgressModal" class="modal hidden import-progress-modal" role="dialog" aria-modal="true" aria-labelledby="importProgressTitle">
+      <div class="modal-header">
+        <div id="importProgressTitle" class="modal-title">インポート中</div>
+      </div>
+      <div class="modal-body">
+        <div id="importProgressMessage" class="muted">処理を開始しています…</div>
+        <progress id="importProgressBar" class="import-progress" max="100" value="0"></progress>
+        <div class="import-progress-footer">
+          <span id="importProgressPercent" class="muted">0%</span>
+          <button id="cancelImportBtn" class="btn danger">中断</button>
+        </div>
+      </div>
+    </div>
+
     <input id="jsonFileInput" type="file" accept="application/json" class="hidden" />
     <input id="holidayFileInput" type="file" accept="application/json" class="hidden" />
     <input id="mermaidFileInput" type="file" accept=".mmd,.mermaid,.txt,text/plain" class="hidden" />
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/customParseFormat.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js"></script>
+  <script src="vendor/dayjs.min.js"></script>
+  <script src="vendor/customParseFormat.js"></script>
+  <script src="vendor/dexie.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

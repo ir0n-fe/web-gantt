@@ -782,6 +782,21 @@ body.resizing * {
   flex-wrap: wrap;
 }
 
+.import-progress-modal {
+  width: min(460px, 90vw);
+}
+
+.import-progress {
+  width: 100%;
+  height: 14px;
+}
+
+.import-progress-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .hidden {
   display: none;
 }
