@@ -2,6 +2,15 @@
 /* global dayjs, Dexie */
 (() => {
   const DATE_FMT = 'YYYY-MM-DD';
+  const IMPORT_LIMITS = {
+    jsonMaxBytes: 2 * 1024 * 1024,
+    mermaidMaxBytes: 2 * 1024 * 1024,
+    holidayMaxBytes: 512 * 1024,
+    maxTasks: 5000,
+    maxHolidays: 4000,
+    chunkSize: 200,
+    tickMs: 0
+  };
   const TASK_STATUS = {
     NONE: 'none',
     ACTIVE: 'active',
@@ -40,6 +49,7 @@
   let storageMode = 'none';
   let saveTimer = null;
   let paneResizeState = null;
+  let importController = null;
 
   const els = {};
 
@@ -114,6 +124,11 @@
     els.jsonFileInput = qs('jsonFileInput');
     els.holidayFileInput = qs('holidayFileInput');
     els.mermaidFileInput = qs('mermaidFileInput');
+    els.importProgressModal = qs('importProgressModal');
+    els.importProgressMessage = qs('importProgressMessage');
+    els.importProgressBar = qs('importProgressBar');
+    els.importProgressPercent = qs('importProgressPercent');
+    els.cancelImportBtn = qs('cancelImportBtn');
   }
 
   function setupEvents() {
@@ -277,6 +292,9 @@
     if (els.mermaidFileInput) {
       els.mermaidFileInput.addEventListener('change', handleMermaidImport);
     }
+    if (els.cancelImportBtn) {
+      els.cancelImportBtn.addEventListener('click', cancelImport);
+    }
 
     window.addEventListener('keydown', (event) => {
       if (handleShortcuts(event)) return;
@@ -322,6 +340,51 @@
     setTimeout(() => {
       toast.style.opacity = '0';
     }, 1800);
+  }
+
+  function delay(ms = IMPORT_LIMITS.tickMs) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function assertFileSize(file, maxBytes, label) {
+    if (file.size > maxBytes) {
+      throw new Error(`${label}は${Math.floor(maxBytes / 1024)}KB以下にしてください`);
+    }
+  }
+
+  function startImportProgress(message) {
+    importController = { cancelled: false };
+    if (!els.importProgressModal) return importController;
+    if (els.importProgressMessage) els.importProgressMessage.textContent = message;
+    if (els.importProgressBar) els.importProgressBar.value = 0;
+    if (els.importProgressPercent) els.importProgressPercent.textContent = '0%';
+    els.importProgressModal.classList.remove('hidden');
+    if (els.overlay) els.overlay.classList.remove('hidden');
+    return importController;
+  }
+
+  function updateImportProgress(percent, message) {
+    const safe = Math.max(0, Math.min(100, Math.round(percent)));
+    if (els.importProgressBar) els.importProgressBar.value = safe;
+    if (els.importProgressPercent) els.importProgressPercent.textContent = `${safe}%`;
+    if (message && els.importProgressMessage) els.importProgressMessage.textContent = message;
+  }
+
+  function closeImportProgress() {
+    if (els.importProgressModal) els.importProgressModal.classList.add('hidden');
+    if (els.overlay && !isAnyModalOpen()) els.overlay.classList.add('hidden');
+    importController = null;
+  }
+
+  function cancelImport() {
+    if (!importController) return;
+    importController.cancelled = true;
+  }
+
+  function ensureImportNotCancelled(controller) {
+    if (controller && controller.cancelled) {
+      throw new Error('cancelled');
+    }
   }
 
   function generateId() {
@@ -1708,21 +1771,46 @@
   async function handleJsonImport(event) {
     const file = event.target.files[0];
     if (!file) return;
-    const text = await file.text();
+    const controller = startImportProgress('JSONを検証中…');
     try {
+      assertFileSize(file, IMPORT_LIMITS.jsonMaxBytes, 'JSONファイル');
+      const text = await file.text();
+      ensureImportNotCancelled(controller);
       const data = JSON.parse(text);
       if (!data || typeof data !== 'object') throw new Error('invalid');
+      const rawTasks = Array.isArray(data.tasks) ? data.tasks : [];
+      const rawHolidays = Array.isArray(data.holidays) ? data.holidays : [];
+      if (rawTasks.length > IMPORT_LIMITS.maxTasks) throw new Error(`タスク数は${IMPORT_LIMITS.maxTasks}件以下にしてください`);
+      if (rawHolidays.length > IMPORT_LIMITS.maxHolidays) throw new Error(`祝日数は${IMPORT_LIMITS.maxHolidays}件以下にしてください`);
+
+      const normalizedTasks = [];
+      for (let i = 0; i < rawTasks.length; i += IMPORT_LIMITS.chunkSize) {
+        ensureImportNotCancelled(controller);
+        const chunk = rawTasks.slice(i, i + IMPORT_LIMITS.chunkSize).map(normalizeTask);
+        normalizedTasks.push(...chunk);
+        updateImportProgress((i / Math.max(rawTasks.length, 1)) * 80, `タスクを処理中… ${Math.min(i + chunk.length, rawTasks.length)}/${rawTasks.length}`);
+        await delay();
+      }
+
       state.schemaVersion = data.schemaVersion || 1;
-      state.tasks = Array.isArray(data.tasks) ? data.tasks.map(normalizeTask) : [];
-      state.holidays = Array.isArray(data.holidays) ? data.holidays : [];
+      state.tasks = normalizedTasks;
+      state.holidays = rawHolidays;
       state.manualOrder = Array.isArray(data.manualOrder) ? data.manualOrder : [];
+      updateImportProgress(90, 'スケジュールを再計算中…');
       ensureHolidaySet();
       syncManualOrder();
       scheduleAll();
       commitStateChange();
+      updateImportProgress(100, '完了');
       showToast('JSONを読み込んでガントチャートを開きました');
     } catch (error) {
-      showToast('JSONの読み込みに失敗しました', 'error');
+      if (error && error.message === 'cancelled') {
+        showToast('インポートを中断しました', 'error');
+      } else {
+        showToast(error && error.message ? error.message : 'JSONの読み込みに失敗しました', 'error');
+      }
+    } finally {
+      closeImportProgress();
     }
     event.target.value = '';
   }
@@ -1730,17 +1818,32 @@
   async function handleMermaidImport(event) {
     const file = event.target.files[0];
     if (!file) return;
-    const text = await file.text();
+    const controller = startImportProgress('Mermaidを検証中…');
     try {
+      assertFileSize(file, IMPORT_LIMITS.mermaidMaxBytes, 'Mermaidファイル');
+      const text = await file.text();
+      ensureImportNotCancelled(controller);
       const result = parseMermaidGantt(text);
       if (!result.tasks.length) throw new Error('empty');
+      if (result.tasks.length > IMPORT_LIMITS.maxTasks) throw new Error(`タスク数は${IMPORT_LIMITS.maxTasks}件以下にしてください`);
+      updateImportProgress(40, '依存関係を検証中…');
+      ensureImportNotCancelled(controller);
       if (hasCycle(result.tasks)) {
         showToast('循環依存のため読み込みできません', 'error');
         event.target.value = '';
         return;
       }
+      updateImportProgress(60, 'タスクを正規化中…');
       state.schemaVersion = 1;
-      state.tasks = result.tasks.map(normalizeTask);
+      const normalizedTasks = [];
+      for (let i = 0; i < result.tasks.length; i += IMPORT_LIMITS.chunkSize) {
+        ensureImportNotCancelled(controller);
+        const chunk = result.tasks.slice(i, i + IMPORT_LIMITS.chunkSize).map(normalizeTask);
+        normalizedTasks.push(...chunk);
+        updateImportProgress(60 + (i / Math.max(result.tasks.length, 1)) * 30, `タスクを処理中… ${Math.min(i + chunk.length, result.tasks.length)}/${result.tasks.length}`);
+        await delay();
+      }
+      state.tasks = normalizedTasks;
       state.holidays = Array.isArray(result.holidays) ? result.holidays : [];
       state.manualOrder = state.tasks.map((task) => task.id);
       ensureHolidaySet();
@@ -1748,9 +1851,16 @@
       scheduleAll();
       commitStateChange({ skipSchedule: true });
       closeMermaidModal();
+      updateImportProgress(100, '完了');
       showToast('Mermaid を読み込んでガントチャートを開きました');
     } catch (error) {
-      showToast('Mermaid の読み込みに失敗しました', 'error');
+      if (error && error.message === 'cancelled') {
+        showToast('インポートを中断しました', 'error');
+      } else {
+        showToast(error && error.message ? error.message : 'Mermaid の読み込みに失敗しました', 'error');
+      }
+    } finally {
+      closeImportProgress();
     }
     event.target.value = '';
   }
@@ -1758,8 +1868,11 @@
   async function handleHolidayImport(event) {
     const file = event.target.files[0];
     if (!file) return;
-    const text = await file.text();
+    const controller = startImportProgress('祝日ファイルを検証中…');
     try {
+      assertFileSize(file, IMPORT_LIMITS.holidayMaxBytes, '祝日JSONファイル');
+      const text = await file.text();
+      ensureImportNotCancelled(controller);
       const data = JSON.parse(text);
       let holidays = [];
       if (Array.isArray(data)) {
@@ -1767,17 +1880,32 @@
       } else if (Array.isArray(data.holidays)) {
         holidays = data.holidays;
       }
-      holidays = holidays
-        .map((d) => toISO(parseDate(d)))
-        .filter((d) => d && d.length === 10);
-      state.holidays = Array.from(new Set(holidays)).sort();
+      if (holidays.length > IMPORT_LIMITS.maxHolidays) throw new Error(`祝日数は${IMPORT_LIMITS.maxHolidays}件以下にしてください`);
+      const parsedHolidays = [];
+      for (let i = 0; i < holidays.length; i += IMPORT_LIMITS.chunkSize) {
+        ensureImportNotCancelled(controller);
+        const chunk = holidays.slice(i, i + IMPORT_LIMITS.chunkSize)
+          .map((d) => toISO(parseDate(d)))
+          .filter((d) => d && d.length === 10);
+        parsedHolidays.push(...chunk);
+        updateImportProgress((i / Math.max(holidays.length, 1)) * 90, `祝日を処理中… ${Math.min(i + chunk.length, holidays.length)}/${holidays.length}`);
+        await delay();
+      }
+      state.holidays = Array.from(new Set(parsedHolidays)).sort();
       ensureHolidaySet();
       scheduleAll();
       commitStateChange();
       renderHolidayList();
+      updateImportProgress(100, '完了');
       showToast('祝日を更新しました');
     } catch (error) {
-      showToast('JSONファイルの読み込みに失敗しました', 'error');
+      if (error && error.message === 'cancelled') {
+        showToast('インポートを中断しました', 'error');
+      } else {
+        showToast(error && error.message ? error.message : 'JSONファイルの読み込みに失敗しました', 'error');
+      }
+    } finally {
+      closeImportProgress();
     }
     event.target.value = '';
   }
@@ -1848,6 +1976,14 @@
     renderMermaid();
     els.overlay.classList.remove('hidden');
     els.mermaidModal.classList.remove('hidden');
+  }
+
+  function isAnyModalOpen() {
+    return Boolean(
+      (els.mermaidModal && !els.mermaidModal.classList.contains('hidden'))
+      || (els.holidayModal && !els.holidayModal.classList.contains('hidden'))
+      || (els.importProgressModal && !els.importProgressModal.classList.contains('hidden'))
+    );
   }
 
   function closeMermaidModal() {
