@@ -1,0 +1,237 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gantt</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <button id="addTaskBtn" class="btn primary" title="タスク追加" aria-label="タスク追加"><span class="icon">&#xE710;</span></button>
+        <button id="toggleLeftBtn" class="btn" title="左ペイン表示切替" aria-label="左ペイン表示切替">
+          <span class="icon">&#xe90c;</span>
+        </button>
+        <button id="toggleRightBtn" class="btn" title="右ペイン表示切替" aria-label="右ペイン表示切替">
+          <span class="icon">&#xe90d;</span>
+        </button>
+        <button id="undoBtn" class="btn" title="Undo (Ctrl+Z)"><span class="icon">&#xE7A7;</span></button>
+        <button id="redoBtn" class="btn" title="Redo (Ctrl+Y / Ctrl+Shift+Z)"><span class="icon">&#xE7A6;</span></button>
+        <button id="manageHolidayBtn" class="btn"><span class="icon">&#xe787;</span>祝日設定</button>
+      </div>
+      <div class="topbar-actions">
+        <button id="importJsonBtn" class="btn" title="JSONインポート"><span class="icon">&#xe838;</span></button>
+        <button id="exportJsonBtn" class="btn" title="JSONエクスポート"><span class="icon">&#xE74E;</span></button>
+        <button id="resetGanttBtn" class="btn" title="リセット"><span class="icon">&#xe74d;</span></button>
+        <button id="exportMermaidBtn" class="btn"><span class="icon">&#xe943;</span>Mermaid</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <section class="pane left">
+        <div class="pane-header">
+          <div class="filters">
+            <input id="filterText" class="input" type="search" placeholder="検索 (タイトル / メモ)" />
+            <select id="filterCategory" class="select">
+              <option value="">分類: すべて</option>
+            </select>
+            <select id="filterAssignee" class="select">
+              <option value="">担当: すべて</option>
+            </select>
+          </div>
+        </div>
+        <div id="tableWrap" class="table-wrap">
+          <table class="task-table">
+            <colgroup>
+              <col class="col-handle" />
+              <col class="col-title" />
+              <col class="col-category" />
+              <col class="col-assignee" />
+              <col class="col-status" />
+              <col class="col-start" />
+              <col class="col-end" />
+              <col class="col-duration" />
+              <col class="col-dependencies" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="col-handle"></th>
+                <th data-key="title">タイトル</th>
+                <th data-key="category">分類</th>
+                <th data-key="assignee">担当</th>
+                <th data-key="status">進捗</th>
+                <th data-key="start">開始</th>
+                <th data-key="end">終了</th>
+                <th data-key="duration">日数</th>
+                <th data-key="dependencies">依存</th>
+              </tr>
+            </thead>
+            <tbody id="taskTbody"></tbody>
+          </table>
+        </div>
+      </section>
+      <div id="paneSplitter" class="pane-splitter" role="separator" aria-orientation="vertical" aria-label="左右ペイン幅の調整"></div>
+
+      <section class="pane right">
+        <div class="pane-header">
+          <div class="gantt-tools">
+            <span class="icon">&#xe71e;</span>
+            <input id="zoomRange" type="range" min="18" max="50" value="24" />
+            <div id="rangeLabel" class="muted"></div>
+          </div>
+        </div>
+        <div class="gantt-wrap">
+          <div id="ganttHeader" class="gantt-header"></div>
+          <div id="ganttBody" class="gantt-body">
+            <div id="ganttBg" class="gantt-bg"></div>
+            <svg id="ganttLinks" class="gantt-links"></svg>
+            <div id="ganttRows" class="gantt-rows"></div>
+            <div id="todayLine" class="today-line"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside id="detailPanel" class="panel">
+      <div class="panel-header">
+        <div class="panel-title">詳細</div>
+        <button id="closePanelBtn" class="btn ghost"><span class="icon">&#xE711;</span></button>
+      </div>
+      <div class="panel-body">
+        <div class="field">
+          <label>タイトル</label>
+          <input id="detailTitle" class="input" type="text" />
+        </div>
+        <div class="field">
+          <label>分類</label>
+          <input id="detailCategory" class="input" type="text" />
+        </div>
+        <div class="field">
+          <label>担当</label>
+          <input id="detailAssignee" class="input" type="text" />
+        </div>
+        <div class="field">
+          <label>進捗</label>
+          <select id="detailStatus" class="select">
+            <option value="none">未設定</option>
+            <option value="active">進行中</option>
+            <option value="done">完了</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>開始</label>
+            <input id="detailStart" class="input" type="date" />
+          </div>
+          <div class="field">
+            <label>終了</label>
+            <input id="detailEnd" class="input" type="date" />
+          </div>
+          <div class="field">
+            <label>稼働日数</label>
+            <input id="detailDuration" class="input" type="number" min="1" />
+          </div>
+        </div>
+        <div class="field">
+          <label class="check-label">
+            <input id="detailMilestone" class="checkbox" type="checkbox" />
+            マイルストーン (1日)
+          </label>
+        </div>
+        <div class="field">
+          <label>メモ</label>
+          <textarea id="detailNotes" class="textarea" rows="4"></textarea>
+        </div>
+
+        <div class="field">
+          <div class="field-header">
+            <label>依存関係</label>
+            <button id="addDependencyBtn" class="btn small"><span class="icon">&#xE710;</span>追加</button>
+          </div>
+          <div id="dependencyList" class="dep-list"></div>
+        </div>
+      </div>
+      <div class="panel-footer">
+        <button id="deleteTaskBtn" class="btn danger"><span class="icon">&#xE74D;</span>削除</button>
+      </div>
+    </aside>
+
+    <div id="overlay" class="overlay hidden"></div>
+    <div id="mermaidModal" class="modal hidden">
+      <div class="modal-header">
+        <div class="modal-title">Mermaid ガントチャートのインポート・エクスポート</div>
+        <button id="closeMermaidBtn" class="btn ghost"><span class="icon">&#xE711;</span></button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-section">
+          <div class="section-title">インポート</div>
+          <div class="mermaid-import">
+            <button id="importMermaidBtn" class="btn"><span class="icon">&#xe838;</span>Mermaid のガントチャートをインポート</button>
+            <div class="muted">Note: 現在のガントチャートを上書きしてインポートします</div>
+          </div>
+        </div>
+        <div class="modal-section">
+          <div class="section-title">エクスポート</div>
+          <div class="mermaid-grid">
+            <label class="label">セクションの設定</label>
+            <select id="mermaidGroup" class="select">
+              <option value="category">分類でまとめる</option>
+              <option value="assignee">担当でまとめる</option>
+            </select>
+          </div>
+          <div class="mermaid-grid">
+            <label class="label">終了日の設定</label>
+            <select id="mermaidDateMode" class="select">
+              <option value="duration">タスクの必要日数を優先</option>
+              <option value="end">終了日を優先</option>
+            </select>
+          </div>
+
+          <div class="section-head">
+            <div class="section-title">出力プレビュー</div>
+            <button id="copyMermaidBtn" class="btn primary"><span class="icon">&#xe8c8;</span>コピー</button>
+          </div>
+          <textarea id="mermaidOutput" class="textarea" rows="14"></textarea>
+          <div class="muted">Note: タスクに含まれるメモや、依存関係（SS/FF/SF）は保持されません</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="holidayModal" class="modal hidden">
+      <div class="modal-header">
+        <div class="modal-title">祝日の設定</div>
+        <button id="closeHolidayBtn" class="btn ghost"><span class="icon">&#xE711;</span></button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-section">
+          <div class="section-title">祝日設定（JSON）のインポートとエクスポート</div>
+          <div class="holiday-actions holiday-actions-io">
+            <button id="holidayImportBtn" class="btn"><span class="icon">&#xe838;</span>インポート</button>
+            <button id="holidayExportBtn" class="btn"><span class="icon">&#xE74E;</span>エクスポート</button>
+          </div>
+          <div class="muted">Note: 現在の祝日設定を上書きしてインポートします</div>
+        </div>
+        <div class="modal-section">
+          <div class="section-title">設定済みの祝日</div>
+          <div class="holiday-actions">
+            <input id="holidayDateInput" class="input" type="date" />
+            <button id="holidayAddBtn" class="btn primary"><span class="icon">&#xe710;</span>追加</button>
+          </div>
+          <div id="holidayList" class="holiday-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <input id="jsonFileInput" type="file" accept="application/json" class="hidden" />
+    <input id="holidayFileInput" type="file" accept="application/json" class="hidden" />
+    <input id="mermaidFileInput" type="file" accept=".mmd,.mermaid,.txt,text/plain" class="hidden" />
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/customParseFormat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
